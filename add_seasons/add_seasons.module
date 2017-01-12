@@ -1,0 +1,138 @@
+<?php
+
+include_once(dirname(__FILE__)."/DetectCyrillic/Encoding.php");
+
+
+function add_seasins_menu(){
+    $items = array();
+    $items['test_url'] = array(
+        'title' => 'Добавление сезонов и серий',
+        'page callback' => 'main_function',
+        'access arguments' => array('administer users'),
+        'type' => MENU_NORMAL_ITEM, 
+        'access callback' => TRUE, 
+    );
+
+    return $items;
+}
+
+function my_form($form, &$form_state){
+    $form = array();
+    $form['ser_name'] = array(
+        '#type' => 'textfield',
+        '#title' => 'Название сериала',
+    );
+    $form['add_season'] = array(
+        '#type' => 'textfield',
+        '#title' => 'Название сезона',
+    );
+    $form['num_season'] = array(
+        '#type' => 'textfield',
+        '#title' => 'Номер сезона',
+    );
+    $form['add_number'] = array(
+        '#type' => 'textfield',
+        '#title' => 'Количество серий в сезоне',
+    );
+    $form['nota_ser'] = array(
+        '#type' => 'textarea',
+        '#title' => 'Добавить описание сезона(если это кому-то нужно)',
+    );
+    $form['file'] = array(
+        '#type' => 'file',
+        '#name' => 'files[]',
+        '#title' => t('Цеплять сабы сюда'),
+        '#attributes' => array('multiple' => 'multiple'),
+    );
+    $form['submit'] = array(
+        '#type' => 'submit',
+        '#value' => t('Добавить'),
+    );
+    return $form;
+}
+
+function my_form_validate($form, &$form_state) {
+    $num_files = count($_FILES['files']['name']);
+    for ($i = 0; $i < $num_files; $i++) {
+        $file = file_save_upload($i, array(
+            'file_validate_extensions' => array('srt'),
+        ));
+        if ($file) {
+            if ($file = file_move($file, 'public://')) {
+                $form_state['values']['file'][$i] = $file;
+            }
+            else {
+                form_set_error('file', t('Failed to write the uploaded file the site\'s file folder.'));
+            }
+        }
+        else {
+            form_set_error('file', t('No file was uploaded.'));
+        }
+    }
+}
+
+
+function my_form_submit($form, $form_state) {
+    $query = new EntityFieldQuery();
+    $entities = $query->entityCondition('entity_type', 'node')
+        ->propertyCondition('type', 'series')
+        ->propertyCondition('title', $form_state['values']['ser_name'])
+        ->propertyCondition('status', 1)
+        ->range(0,1)
+        ->execute();
+    if (!empty($entities['node'])) {
+        $node = node_load(array_shift(array_keys($entities['node'])));
+        $this_nid = $node->nid;
+        $nodeSe = new stdClass();
+        $nodeSe->type = 'season';
+        node_object_prepare($nodeSe);
+        $nodeSe->title = $form_state['values']['add_season'];
+        $nodeSe->language = LANGUAGE_NONE;
+        $nodeSe->body[$nodeSe->language][0]['value'] = $form_state['values']['nota_ser'];
+        $nodeSe->body[$nodeSe->language][0]['format']  = 'filtered_html';
+        $nodeSe->field_episodes_amount[$nodeSe->language][0]['value'] = $form_state['values']['add_number'];
+        $nodeSe->field_number[$nodeSe->language][0]['value'] = $form_state['values']['num_season'];
+        $nodeSe->field_series[$nodeSe->language][0]['target_id'] = $this_nid;
+        node_save($nodeSe);
+        if (is_array($form_state['values']['file'])) {
+            $i = 1;
+                foreach ($form_state['values']['file'] as $file) {
+                    $new_file = file_load($file->fid);
+                    $Detector = new Encoding();
+                    $encoding = $Detector->detectMaxRelevant(file_get_contents
+                        ($file->uri));
+                    $enc_str = mb_convert_encoding(file_get_contents($file->uri), 'utf8', $encoding);
+                    $clear_str = strip_tags($enc_str);
+                    $clear_str = preg_replace('/(\d+:\d+:\d+,\d+)|(\d+)|(-->)/',
+                    '', $enc_str);
+                    $clear_str = preg_replace('/\n+|\r+/', '', $clear_str);
+                    $clear_str = preg_replace('/[^\w\s]/u', ' ', $clear_str); 
+                    $clear_str = mb_strtolower($clear_str);
+                    drupal_set_message($clear_str);
+                    $nodeSeria = new stdClass();
+                    $nodeSeria->type = 'seria';
+                    node_object_prepare($nodeSeria);
+                    $nodeSeria->title = 'Серия '.$i;
+                    $nodeSeria->language = LANGUAGE_NONE;
+                    $nodeSeria->body[$nodeSeria->language][0]['value'] = $clear_str;
+                    $nodeSeria->field_serial[$nodeSeria->language][0]
+                        ['target_id'] = $this_nid;
+                    $nodeSeria->field_season[$nodeSeria->language][0]['target_id'] = $nodeSe->nid;
+                    $nodeSeria->field_num[$nodeSeria->language][0]['value'] = $i;
+                    node_save($nodeSeria);
+                    file_delete($new_file);
+                    $i++;
+                }
+            }
+        else{
+            drupal_set_message("Что-то пошло не так");
+        }
+    }
+    drupal_set_message('Всё ок');
+}
+
+function main_function(){
+    $form = drupal_get_form('my_form'); 
+    $form = drupal_render($form); 
+    return $form;
+}

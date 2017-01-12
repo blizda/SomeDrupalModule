@@ -1,0 +1,5 @@
+name = Добавление сезонов
+description = Модуль для добавления сезонов и серий
+package = Content
+core=7.x
+version = "7.x-1.x-dev"
